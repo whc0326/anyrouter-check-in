@@ -317,6 +317,19 @@ def execute_check_in(client, account_name: str, provider_config, headers: dict):
 
 def format_check_in_notification(detail: dict) -> str:
 	"""格式化签到通知消息"""
+	if detail.get('checkin_status'):
+		labels = {
+			'reward_confirmed': '新登录已验证，奖励已确认',
+			'no_new_reward': '新登录已验证，服务器未发放新奖励',
+			'login_verified_reward_unknown': '新登录已验证，奖励到账情况尚未确认',
+		}
+		return '\n'.join(
+			[
+				f'[OAUTH] {detail["name"]}',
+				labels[detail['checkin_status']],
+				f'当前余额: ${detail["after_quota"]:.2f}',
+			]
+		)
 	lines = [
 		f'[CHECK-IN] {detail["name"]}',
 		'  ━━━━━━━━━━━━━━━━━━━━',
@@ -361,6 +374,38 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 		return False, None, None
 
 	print(f'[INFO] {account_name}: Using provider "{account.provider}" ({provider_config.domain})')
+
+	if account.auth_method == 'github':
+		from utils.github_oauth import run_github_checkin
+
+		try:
+			result = await run_github_checkin(account, provider_config)
+			print(f'[OAUTH] {account_name}: {result.status}; fresh login and account identity verified')
+			if result.reward is not None:
+				print(f'[OAUTH] {account_name}: Total quota change: ${result.reward:.2f}')
+
+			def balance(profile):
+				if profile is None:
+					return None
+				quota, used = profile['quota'] / 500000, profile['used_quota'] / 500000
+				return {
+					'success': True,
+					'quota': quota,
+					'used_quota': used,
+					'display': f'Current balance: ${quota:.2f}, Used: ${used:.2f}',
+					'checkin_status': result.status,
+				}
+
+			return True, balance(result.before), balance(result.after)
+		except Exception as exc:
+			# Do not log exception URLs: an OAuth URL can contain a one-time code.
+			print(f'[FAILED] {account_name}: GitHub OAuth could not be verified ({type(exc).__name__})')
+			print('[HINT] Run python agentrouter_github.py bootstrap for an expired GitHub session or verification.')
+			return False, None, None
+
+	if account.provider == 'agentrouter' and not account.has_login_credentials():
+		print('[FAILED] AgentRouter session cookies do not trigger daily login rewards. Use auth_method=github.')
+		return False, None, None
 
 	# 邮箱密码优先
 	all_cookies = None
@@ -556,6 +601,7 @@ async def main():
 						'usage_increase': usage_increase,
 						'balance_change': balance_change,
 						'success': success,
+						'checkin_status': user_info_after.get('checkin_status'),
 					}
 
 			if should_notify_this_account:
@@ -602,15 +648,15 @@ async def main():
 
 	if need_notify and notification_content:
 		summary = [
-			'[STATS] Check-in result statistics:',
+			'[STATS] Account task results (login completion does not prove a new reward):',
 			f'[SUCCESS] Success: {success_count}/{total_count}',
 			f'[FAIL] Failed: {total_count - success_count}/{total_count}',
 		]
 
 		if success_count == total_count:
-			summary.append('[SUCCESS] All accounts check-in successful!')
+			summary.append('[SUCCESS] All account tasks completed')
 		elif success_count > 0:
-			summary.append('[WARN] Some accounts check-in successful')
+			summary.append('[WARN] Some account tasks completed')
 		else:
 			summary.append('[ERROR] All accounts check-in failed')
 
@@ -631,7 +677,7 @@ async def main():
 
 		print(notify_content)
 		notify.push_message('AnyRouter Check-in Alert', notify_content, msg_type='text')
-		print('[NOTIFY] Notification sent due to failures or balance changes')
+		print('[NOTIFY] Notification attempted due to failures or balance changes')
 	else:
 		print('[INFO] All accounts successful and no balance changes detected, notification skipped')
 

@@ -98,7 +98,7 @@ class AppConfig:
 				name='agentrouter',
 				domain='https://agentrouter.org',
 				login_path='/login',
-				sign_in_path=None,  # 无需签到接口，查询用户信息时自动完成签到
+				sign_in_path=None,  # 无独立签到接口；必须重新登录才能触发登录奖励
 				user_info_path='/api/user/self',
 				api_user_key='new-api-user',
 				bypass_method='waf_cookies',
@@ -155,6 +155,7 @@ class AccountConfig:
 	name: str | None = None
 	email: str | None = None
 	password: str | None = None
+	auth_method: str = 'auto'
 
 	@classmethod
 	def from_dict(cls, data: dict, index: int) -> 'AccountConfig':
@@ -169,6 +170,7 @@ class AccountConfig:
 			name=name if name else None,
 			email=data.get('email'),
 			password=data.get('password'),
+			auth_method=data.get('auth_method', 'auto'),
 		)
 
 	def has_login_credentials(self) -> bool:
@@ -204,6 +206,21 @@ def load_accounts_config() -> list[AccountConfig] | None:
 			if not isinstance(account_dict, dict):
 				print(f'ERROR: Account {i + 1} configuration format is incorrect')
 				return None
+
+			method = account_dict.get('auth_method', 'auto')
+			if method not in {'auto', 'github'}:
+				print(f'ERROR: Account {i + 1} has an unsupported auth_method')
+				return None
+			if method == 'github':
+				if (
+					account_dict.get('provider') != 'agentrouter'
+					or not isinstance(account_dict.get('name'), str)
+					or not account_dict['name'].strip()
+				):
+					print('ERROR: GitHub OAuth requires provider=agentrouter and a stable account name')
+					return None
+				accounts.append(AccountConfig.from_dict(account_dict, i))
+				continue
 
 			if 'api_user' not in account_dict:
 				has_login = account_dict.get('email') and account_dict.get('password')

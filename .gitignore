@@ -11,5 +11,7 @@ htmlcov
 balance_hash.txt
 .browser_profiles
 checkin_screenshots
+.local_state/
+logs/
 
 .DS_Store

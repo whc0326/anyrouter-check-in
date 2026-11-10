@@ -24,6 +24,9 @@
 
 ## 使用方法
 
+> **AgentRouter 的 GitHub 登录账号**：使用新增的 [Windows 本地 OAuth 模式](docs/agentrouter-github-windows.md)。
+> 原 Session Cookie 模式不能触发每日重新登录奖励，本地模式会明确区分登录完成与奖励到账。
+
 ### 1. Fork 本仓库
 
 点击右上角的 "Fork" 按钮，将本仓库 fork 到你的账户。
@@ -262,7 +265,7 @@
   - `sign_in_path: "/api/user/sign_in"`
 - `agentrouter`：
   - `bypass_method: "waf_cookies"`（需要获取 `acw_tc`）
-  - `sign_in_path: null`（查询用户信息时自动签到）
+  - `sign_in_path: null`（无独立签到接口；查询用户信息不能证明签到，需要重新登录）
   - `use_proxy: true`
 
 **重要提示**：
