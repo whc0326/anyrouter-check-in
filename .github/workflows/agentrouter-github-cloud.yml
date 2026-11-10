@@ -8,6 +8,11 @@ on:
         description: 仅测试公共登录页面，不使用账号凭证
         type: boolean
         default: true
+      engine:
+        description: 浏览器运行时
+        type: choice
+        options: [chrome, cloak]
+        default: chrome
 
 permissions:
   contents: read
@@ -27,6 +32,7 @@ jobs:
       PYTHONIOENCODING: utf-8
       PYTHONUNBUFFERED: '1'
       CHECKIN_BROWSER_CHANNEL: chrome
+      CLOUD_BROWSER_ENGINE: ${{ inputs.engine || vars.AGENTROUTER_CLOUD_ENGINE || 'chrome' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -35,6 +41,9 @@ jobs:
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
       - name: 安装锁定依赖
         run: uv sync --frozen
+      - name: 安装备用浏览器运行时
+        if: env.CLOUD_BROWSER_ENGINE == 'cloak'
+        run: uv run python -m cloakbrowser install
       - name: 确认会话密钥版本
         id: state-key
         if: github.event_name != 'workflow_dispatch' || !inputs.preflight

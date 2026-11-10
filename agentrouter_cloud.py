@@ -20,6 +20,21 @@ ROOT = Path(__file__).resolve().parent
 STATE_DIR = ROOT / '.local_state' / 'cloud'
 
 
+async def launch_cloud_browser(playwright, proxy=None):
+	engine = os.getenv('CLOUD_BROWSER_ENGINE', 'chrome')
+	if engine == 'cloak':
+		from cloakbrowser import launch_async
+
+		return await launch_async(headless=True, proxy=proxy)
+	if engine != 'chrome':
+		raise ValueError('Unsupported cloud browser engine')
+	return await playwright.chromium.launch(
+		channel=os.getenv('CHECKIN_BROWSER_CHANNEL', 'chrome'),
+		headless=True,
+		proxy=proxy,
+	)
+
+
 async def export_state(name: str):
 	profile_dir = profile_directory(name)
 	identity_path = profile_dir / 'identity.json'
@@ -48,9 +63,7 @@ async def export_state(name: str):
 
 async def preflight():
 	async with async_playwright() as playwright:
-		browser = await playwright.chromium.launch(
-			channel=os.getenv('CHECKIN_BROWSER_CHANNEL', 'chrome'), headless=True
-		)
+		browser = await launch_cloud_browser(playwright)
 		try:
 			page = await browser.new_page()
 			await page.goto('https://github.com/login', wait_until='domcontentloaded', timeout=60_000)
@@ -86,9 +99,7 @@ async def cloud_run(name: str):
 	if os.getenv('CHECKIN_PROXY_URL'):
 		proxy = {'server': os.environ['CHECKIN_PROXY_URL']}
 	async with async_playwright() as playwright:
-		browser = await playwright.chromium.launch(
-			channel=os.getenv('CHECKIN_BROWSER_CHANNEL', 'chrome'), headless=True, proxy=proxy
-		)
+		browser = await launch_cloud_browser(playwright, proxy)
 		context = await browser.new_context(
 			storage_state=payload['storage_state'], viewport={'width': 1280, 'height': 900}
 		)
