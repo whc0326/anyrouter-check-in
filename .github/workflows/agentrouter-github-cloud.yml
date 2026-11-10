@@ -1,0 +1,96 @@
+name: AgentRouter GitHub 云端签到
+on:
+  schedule:
+    - cron: '17 1,7,13,19 * * *'
+  workflow_dispatch:
+    inputs:
+      preflight:
+        description: 仅测试公共登录页面，不使用账号凭证
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: agentrouter-github-cloud
+  cancel-in-progress: false
+
+jobs:
+  checkin:
+    if: github.event_name == 'workflow_dispatch' || vars.AGENTROUTER_CLOUD_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: agentrouter-cloud
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUNBUFFERED: '1'
+      CHECKIN_BROWSER_CHANNEL: chrome
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+      - name: 安装锁定依赖
+        run: uv sync --frozen
+      - name: 确认会话密钥版本
+        id: state-key
+        if: github.event_name != 'workflow_dispatch' || !inputs.preflight
+        env:
+          CLOUD_STATE_KEY: ${{ secrets.CLOUD_STATE_KEY }}
+        run: uv run python agentrouter_cloud.py key-id
+      - name: 查找本分支最近成功的加密会话
+        id: previous
+        if: github.event_name != 'workflow_dispatch' || !inputs.preflight
+        uses: actions/github-script@v7
+        env:
+          STATE_ARTIFACT_NAME: github-login-encrypted-${{ steps.state-key.outputs.key-id }}
+        with:
+          script: |
+            const runs = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'agentrouter-github-cloud.yml',
+              branch: context.ref.replace('refs/heads/', ''), status: 'success', per_page: 10
+            });
+            for (const run of runs.data.workflow_runs) {
+              if (!['workflow_dispatch', 'schedule'].includes(run.event)) continue;
+              const artifacts = await github.rest.actions.listWorkflowRunArtifacts({...context.repo, run_id: run.id});
+              if (artifacts.data.artifacts.some(a => a.name === process.env.STATE_ARTIFACT_NAME && !a.expired)) {
+                core.setOutput('run-id', String(run.id)); break;
+              }
+            }
+      - uses: actions/download-artifact@v4
+        if: steps.previous.outputs.run-id != ''
+        with:
+          name: github-login-encrypted-${{ steps.state-key.outputs.key-id }}
+          path: .local_state/cloud/restored
+          run-id: ${{ steps.previous.outputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: 公共页面连通性测试
+        if: github.event_name == 'workflow_dispatch' && inputs.preflight
+        run: uv run python agentrouter_cloud.py preflight
+      - name: GitHub OAuth 重新登录并核对账号
+        if: github.event_name != 'workflow_dispatch' || !inputs.preflight
+        env:
+          CLOUD_LOGIN_STATE: ${{ secrets.CLOUD_LOGIN_STATE }}
+          CLOUD_STATE_KEY: ${{ secrets.CLOUD_STATE_KEY }}
+        run: uv run python agentrouter_cloud.py run --name main
+      - name: 保存更新后的加密会话
+        if: success() && (github.event_name != 'workflow_dispatch' || !inputs.preflight)
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-login-encrypted-${{ steps.state-key.outputs.key-id }}
+          path: .local_state/cloud/state.enc
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
+      - name: 保存无账号信息的连通性截图
+        if: failure() && github.event_name == 'workflow_dispatch' && inputs.preflight
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-preflight
+          path: .local_state/cloud/preflight.png
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 3

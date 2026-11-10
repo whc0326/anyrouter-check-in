@@ -1,7 +1,7 @@
 """AgentRouter GitHub OAuth with an isolated, local browser profile.
 
-No GitHub password or browser session is uploaded to Actions. Bootstrap is
-interactive; unattended runs stop when GitHub requires authentication again.
+Local profiles stay on the local machine. Optional cloud state is transported
+separately using authenticated encryption and explicit repository secrets.
 """
 
 from __future__ import annotations
@@ -152,69 +152,98 @@ async def run_github_checkin(account, provider, *, bootstrap: bool = False) -> G
 			viewport={'width': 1280, 'height': 900},
 			proxy=proxy,
 		)
-		capture = ResponseCapture(domain, provider.user_info_path)
-		context.on('response', capture.on_response)
 		try:
-			page = context.pages[0] if context.pages else await context.new_page()
-			await page.goto(f'{domain}/console', wait_until='domcontentloaded', timeout=60_000)
-			# Read a fresh baseline when possible; never substitute a cached balance.
-			try:
-				await page.wait_for_timeout(1500)
-				await capture.settle()
-			except Exception:
-				pass
-			before = capture.profiles[-1] if capture.profiles else None
-			if before and expected_id and str(before['id']) != expected_id:
-				raise ValueError('The saved profile belongs to a different AgentRouter account')
-			# Remove only AgentRouter authentication; GitHub's session remains local.
-			for cookie in await context.cookies([domain]):
-				if cookie['name'] == 'session':
-					await context.clear_cookies(name='session', domain=cookie['domain'], path=cookie['path'])
-			await page.evaluate("() => localStorage.removeItem('user')")
-			await page.goto(f'{domain}{provider.login_path}', wait_until='domcontentloaded', timeout=60_000)
-			callback_start, profile_start = len(capture.callbacks), len(capture.profiles)
-			await _click_github(page, min(timeout_ms, 60_000))
-			if bootstrap:
-				print(
-					'[ACTION REQUIRED] Sign in to GitHub in the opened browser and complete any verification.',
-					flush=True,
-				)
-			deadline = asyncio.get_running_loop().time() + timeout_ms / 1000
-			callback = None
-			authenticated_page = None
-			while asyncio.get_running_loop().time() < deadline:
-				await capture.settle()
-				for candidate in context.pages:
-					if not bootstrap and github_auth_required(candidate.url):
-						raise GithubLoginRequired('GitHub session expired; run bootstrap again to sign in manually')
-					if candidate.url.startswith(f'{domain}/console'):
-						authenticated_page = candidate
-				new_callbacks = capture.callbacks[callback_start:]
-				if new_callbacks:
-					callback = new_callbacks[-1]
-					if callback.get('success') is not True:
-						raise RuntimeError('AgentRouter rejected the GitHub OAuth callback')
-				if callback and authenticated_page:
-					break
-				await asyncio.sleep(0.25)
-			if not callback or not authenticated_page:
-				raise GithubLoginRequired('OAuth did not finish. Complete login/verification manually using bootstrap.')
-			# Trigger a fresh server-side profile request after OAuth, using the browser.
-			capture.profiles = capture.profiles[:profile_start]
-			await authenticated_page.goto(f'{domain}/console', wait_until='domcontentloaded', timeout=60_000)
-			deadline = asyncio.get_running_loop().time() + 30
-			while len(capture.profiles) <= profile_start and asyncio.get_running_loop().time() < deadline:
-				await asyncio.sleep(0.25)
-				await capture.settle()
-			if len(capture.profiles) <= profile_start:
-				raise RuntimeError('OAuth returned, but a fresh /api/user/self response could not be verified')
-			after = capture.profiles[-1]
-			if expected_id and str(after['id']) != expected_id:
-				raise ValueError('GitHub signed in to a different AgentRouter account; profile was not accepted')
-			identity_path.write_text(json.dumps({'id': after['id']}), encoding='utf-8')
-			status, reward = reward_evidence(callback, before, after)
-			return GithubCheckinResult(before, after, status, reward)
+			return await perform_github_checkin(
+				context,
+				account,
+				provider,
+				expected_id=expected_id,
+				bootstrap=bootstrap,
+				timeout_ms=timeout_ms,
+				identity_path=identity_path,
+			)
 		finally:
-			context.remove_listener('response', capture.on_response)
-			await capture.settle()
 			await context.close()
+
+
+async def perform_github_checkin(
+	context,
+	account,
+	provider,
+	*,
+	expected_id: str,
+	bootstrap: bool = False,
+	timeout_ms: int = 120_000,
+	identity_path: Path | None = None,
+) -> GithubCheckinResult:
+	"""One OAuth login using either a local profile or an isolated cloud context."""
+	domain = provider.domain.rstrip('/')
+	capture = ResponseCapture(domain, provider.user_info_path)
+	context.on('response', capture.on_response)
+	try:
+		page = context.pages[0] if context.pages else await context.new_page()
+		print('[STAGE] Reading current account state', flush=True)
+		await page.goto(f'{domain}/console', wait_until='domcontentloaded', timeout=60_000)
+		# Read a fresh baseline when possible; never substitute a cached balance.
+		try:
+			await page.wait_for_timeout(1500)
+			await capture.settle()
+		except Exception:
+			pass
+		before = capture.profiles[-1] if capture.profiles else None
+		if before and expected_id and str(before['id']) != expected_id:
+			raise ValueError('The saved profile belongs to a different AgentRouter account')
+		# Remove only AgentRouter authentication; GitHub's session remains local.
+		for cookie in await context.cookies([domain]):
+			if cookie['name'] == 'session':
+				await context.clear_cookies(name='session', domain=cookie['domain'], path=cookie['path'])
+		await page.evaluate("() => localStorage.removeItem('user')")
+		await page.goto(f'{domain}{provider.login_path}', wait_until='domcontentloaded', timeout=60_000)
+		callback_start, profile_start = len(capture.callbacks), len(capture.profiles)
+		print('[STAGE] Starting a fresh GitHub OAuth login', flush=True)
+		await _click_github(page, min(timeout_ms, 60_000))
+		if bootstrap:
+			print(
+				'[ACTION REQUIRED] Sign in to GitHub in the opened browser and complete any verification.',
+				flush=True,
+			)
+		deadline = asyncio.get_running_loop().time() + timeout_ms / 1000
+		callback = None
+		authenticated_page = None
+		while asyncio.get_running_loop().time() < deadline:
+			await capture.settle()
+			for candidate in context.pages:
+				if not bootstrap and github_auth_required(candidate.url):
+					raise GithubLoginRequired('GitHub session expired; run bootstrap again to sign in manually')
+				if candidate.url.startswith(f'{domain}/console'):
+					authenticated_page = candidate
+			new_callbacks = capture.callbacks[callback_start:]
+			if new_callbacks:
+				callback = new_callbacks[-1]
+				if callback.get('success') is not True:
+					raise RuntimeError('AgentRouter rejected the GitHub OAuth callback')
+			if callback and authenticated_page:
+				break
+			await asyncio.sleep(0.25)
+		if not callback or not authenticated_page:
+			raise GithubLoginRequired('OAuth did not finish. Complete login/verification manually using bootstrap.')
+		print('[STAGE] OAuth callback accepted; verifying account identity', flush=True)
+		# Trigger a fresh server-side profile request after OAuth, using the browser.
+		capture.profiles = capture.profiles[:profile_start]
+		await authenticated_page.goto(f'{domain}/console', wait_until='domcontentloaded', timeout=60_000)
+		deadline = asyncio.get_running_loop().time() + 30
+		while len(capture.profiles) <= profile_start and asyncio.get_running_loop().time() < deadline:
+			await asyncio.sleep(0.25)
+			await capture.settle()
+		if len(capture.profiles) <= profile_start:
+			raise RuntimeError('OAuth returned, but a fresh /api/user/self response could not be verified')
+		after = capture.profiles[-1]
+		if expected_id and str(after['id']) != expected_id:
+			raise ValueError('GitHub signed in to a different AgentRouter account; profile was not accepted')
+		if identity_path is not None:
+			identity_path.write_text(json.dumps({'id': after['id']}), encoding='utf-8')
+		status, reward = reward_evidence(callback, before, after)
+		return GithubCheckinResult(before, after, status, reward)
+	finally:
+		context.remove_listener('response', capture.on_response)
+		await capture.settle()

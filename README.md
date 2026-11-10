@@ -26,6 +26,9 @@
 
 > **AgentRouter 的 GitHub 登录账号**：使用新增的 [Windows 本地 OAuth 模式](docs/agentrouter-github-windows.md)。
 > 原 Session Cookie 模式不能触发每日重新登录奖励，本地模式会明确区分登录完成与奖励到账。
+>
+> 需要电脑关机后也运行时，参见 [GitHub Actions 云端 OAuth 模式](docs/agentrouter-github-cloud.md)。
+> 云端模式需要单独授权保存 GitHub 网页登录会话，并先通过真实云端测试。
 
 ### 1. Fork 本仓库
 

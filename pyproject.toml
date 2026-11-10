@@ -7,6 +7,7 @@ dependencies = [
   "httpx[http2]>=0.24.0",
   "cloakbrowser>=0.3.0",
   "playwright>=1.52,<2",
+  "cryptography>=44,<47",
   "python-dotenv>=1.0.0"
 ]
 
