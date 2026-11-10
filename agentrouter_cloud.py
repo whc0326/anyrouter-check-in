@@ -63,7 +63,8 @@ async def export_state(name: str):
 
 async def preflight():
 	async with async_playwright() as playwright:
-		browser = await launch_cloud_browser(playwright)
+		proxy = {'server': os.environ['CHECKIN_PROXY_URL']} if os.getenv('CHECKIN_PROXY_URL') else None
+		browser = await launch_cloud_browser(playwright, proxy)
 		try:
 			page = await browser.new_page()
 			await page.goto('https://github.com/login', wait_until='domcontentloaded', timeout=60_000)

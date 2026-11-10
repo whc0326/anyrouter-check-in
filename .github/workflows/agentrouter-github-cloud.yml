@@ -44,6 +44,13 @@ jobs:
       - name: 安装备用浏览器运行时
         if: env.CLOUD_BROWSER_ENGINE == 'cloak'
         run: uv run python -m cloakbrowser install
+      - name: 配置可选云端代理
+        env:
+          PROXY_SUBSCRIPTION_URL: ${{ secrets.PROXY_SUBSCRIPTION_URL }}
+          PROXY_TEST_URL: https://www.google.com/generate_204
+          MIHOMO_VERSION: v1.19.27
+          PROXY_REQUIRED: 'true'
+        run: bash scripts/setup_mihomo_proxy.sh
       - name: 确认会话密钥版本
         id: state-key
         if: github.event_name != 'workflow_dispatch' || !inputs.preflight
@@ -103,3 +110,6 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 3
+      - name: 停止可选代理
+        if: always()
+        run: bash scripts/stop_mihomo_proxy.sh

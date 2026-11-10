@@ -51,3 +51,7 @@ preflight 可上传公开的、无账号登录页面截图。
 它不会自动填写密码、验证码、授权新应用或绕过浏览器安全提示。
 更新初始 Secret 时应同时更新密钥。artifact 名称包含密钥指纹，更新密钥后会自动忽略旧会话并使用新导出。
 网络和验证码限制仍受 GitHub、AgentRouter 的实际策略约束；只有真实云端测试成功后才应停用本机任务。
+
+如果公共页面测试显示 Access Verification 滑块，说明该 Runner 的访问需要人工验证。
+可在专用 Environment 添加可选 `PROXY_SUBSCRIPTION_URL` Secret，使用自己的 Clash/Mihomo 订阅后重新测试。
+预检和真实登录共用同一网络配置。没有可用网络出口时应保持定时开关关闭，程序不会自动完成验证码。
